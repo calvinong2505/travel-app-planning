@@ -61,6 +61,7 @@
   .stop.booked{border-left-color:var(--green);}
   .stop.planned{border-left-color:var(--gold);}
   .stop.idea{border-left-color:#C9BCBC;}
+  .stop.sel{box-shadow:0 0 0 2px var(--red),0 2px 8px rgba(160,27,32,0.12);}
   .stop-top{display:flex;align-items:center;gap:10px;}
   .stop-time{font-size:13px;font-weight:700;color:#666;min-width:46px;}
   .stop-name{font-size:15px;font-weight:700;flex:1;min-width:0;}
@@ -120,7 +121,8 @@
 // EuroTrip Planning — slice 1 (board: days, stops, ideas)
 // ============================================================
 var API = localStorage.getItem('plan_api') || '';
-var state = { screen:'trips', trip:null, trips:[], stops:[], ideas:[] };
+var state = { screen:'trips', trip:null, trips:[], stops:[], ideas:[], selected:null };
+function isDesktop(){ return window.innerWidth > 820; }
 
 function apiGet(action, params){
   var q='?action='+action;
@@ -243,7 +245,7 @@ function renderBoard(){
     if(startDate){ var dd=new Date(startDate); dd.setDate(dd.getDate()+(d-1)); dateLabel=dayNames[dd.getDay()]+' '+dd.getDate()+' '+monNames[dd.getMonth()]; }
     h+='<div class="day"><div class="day-h">Day '+d+(dateLabel?' · '+dateLabel:'')+' <span class="count">'+(dayStops.length?dayStops.length+' stop'+(dayStops.length>1?'s':''):'')+'</span></div>';
     dayStops.forEach(function(s){
-      h+='<div class="stop '+esc(s.status)+'" onclick="stopMenu(\''+s.stop_id+'\')"><div class="stop-top">'+
+      h+='<div class="stop '+esc(s.status)+(state.selected===s.stop_id?' sel':'')+'" onclick="openStop(\''+s.stop_id+'\')"><div class="stop-top">'+
         '<span class="stop-time">'+esc(s.time||'—')+'</span>'+
         '<span class="stop-name">'+esc(s.place_name)+'</span>'+
         '<span class="pill '+esc(s.status)+'">'+esc(s.status)+'</span></div>';
@@ -259,44 +261,158 @@ function renderBoard(){
   }
 
   h+='</div>'; // .board
-  // desktop side panel placeholder (detail editor arrives in slice 2)
-  h+='<div class="panel"><div class="panel-card"><div class="panel-empty">Tap a stop to see and edit its details.<br><br>(Detail editor arrives next.)</div></div></div>';
+  // desktop side panel: shows the detail editor when a stop is selected
+  h+='<div class="panel"><div class="panel-card" id="panel-card">'+
+     (state.selected && isDesktop() ? editorHtml(state.selected) : '<div class="panel-empty">Tap a stop to see and edit its details.</div>')+
+     '</div></div>';
   h+='</div></div>'; // .board-wrap .page
   paint(h);
   document.getElementById('fab').style.display='block';
 }
 
-// ---- lightweight tap menus (slice 1: move / delete; full editor in slice 2) ----
-function stopMenu(stopId){
-  var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
-  var days=tripDayCount(); var opts='';
-  for(var d=1; d<=days; d++){ if(d!==s.day) opts+='<button class="btn ghost" style="margin-bottom:6px" onclick="moveStop(\''+stopId+'\','+d+')">Move to Day '+d+'</button>'; }
-  var statusBtns='<div style="display:flex;gap:6px;margin-bottom:10px">'+
-    ['idea','planned','booked'].map(function(st){
-      var on=(s.status===st);
+// ---- Open a stop's full detail editor (desktop panel / mobile sheet) ----
+function openStop(stopId){
+  state.selected=stopId;
+  if(isDesktop()){
+    renderBoard(); // re-render so the panel shows the editor and the stop highlights
+    // scroll panel into view not needed; it's sticky
+  } else {
+    openSheet(editorHtml(stopId));
+  }
+}
+
+// Build the editor form HTML for a stop
+function editorHtml(stopId){
+  var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0];
+  if(!s) return '<div class="panel-empty">Stop not found.</div>';
+  var days=tripDayCount();
+  function opt(v,cur){ return '<option'+(v===cur?' selected':'')+'>'+v+'</option>'; }
+  function dayOpt(){ var o=''; for(var d=1;d<=days;d++){ o+='<option value="'+d+'"'+(d===s.day?' selected':'')+'>Day '+d+'</option>'; } return o; }
+
+  // things to do checklist (array of strings)
+  var todos=(s.things_to_do||[]);
+  var todoHtml='';
+  todos.forEach(function(t,i){
+    todoHtml+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">'+
+      '<input type="text" id="td-'+i+'" value="'+esc(t)+'" style="margin:0">'+
+      '<button class="x" style="width:34px;flex-shrink:0" onclick="rmTodo('+i+')">✕</button></div>';
+  });
+
+  // nearby (array of {name,distance})
+  var nearby=(s.nearby||[]);
+  var nearbyHtml='';
+  nearby.forEach(function(n,i){
+    nearbyHtml+='<div style="display:flex;gap:6px;align-items:center;margin-bottom:5px">'+
+      '<input type="text" id="nb-name-'+i+'" value="'+esc(n.name||'')+'" placeholder="place" style="margin:0;flex:2">'+
+      '<input type="text" id="nb-dist-'+i+'" value="'+esc(n.distance||'')+'" placeholder="10 min" style="margin:0;flex:1">'+
+      '<button class="x" style="width:34px;flex-shrink:0" onclick="rmNearby('+i+')">✕</button></div>';
+  });
+
+  var statusBtns='<div style="display:flex;gap:6px;margin-bottom:4px">'+
+    ['idea','planned','booked'].map(function(st){ var on=(s.status===st);
       return '<button class="btn '+(on?'':'ghost')+'" style="flex:1;font-size:12px;padding:9px 0" onclick="setStatus(\''+stopId+'\',\''+st+'\')">'+st+'</button>';
     }).join('')+'</div>';
-  openSheet('<div class="sheet-h"><div class="sheet-t">'+esc(s.place_name)+'</div><button class="x" onclick="closeSheet()">✕</button></div>'+
-    '<div style="font-size:13px;color:var(--t2);margin-bottom:12px">Day '+s.day+(s.time?' · '+esc(s.time):'')+'</div>'+
+
+  return (isDesktop()?'':'<div class="sheet-h"><div class="sheet-t">Edit stop</div><button class="x" onclick="closeStop()">✕</button></div>')+
+    (isDesktop()?'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--red-2);text-transform:uppercase;letter-spacing:0.5px">Stop detail</div><button class="x" onclick="closeStop()">✕</button></div>':'')+
+    '<label>Place name</label><input type="text" id="ed-name" value="'+esc(s.place_name)+'">'+
+    '<div class="frow"><div><label>Day</label><select id="ed-day">'+dayOpt()+'</select></div>'+
+    '<div><label>Time</label><input id="ed-time" value="'+esc(s.time||'')+'" placeholder="10:00"></div>'+
+    '<div><label>Duration</label><input id="ed-dur" value="'+esc(s.duration||'')+'" placeholder="2h"></div></div>'+
     '<label>Status</label>'+statusBtns+
-    opts+
-    '<button class="btn ghost" style="margin-bottom:6px" onclick="returnToInbox(\''+stopId+'\')">↩ Return to ideas inbox</button>'+
-    '<button class="btn danger" onclick="delStop(\''+stopId+'\')">Delete stop</button>');
+    '<div class="frow"><div><label>Type</label><select id="ed-type">'+opt('sightseeing',s.type)+opt('food',s.type)+opt('transport',s.type)+opt('accommodation',s.type)+opt('activity',s.type)+'</select></div>'+
+    '<div><label>Rating</label><input id="ed-rating" value="'+esc(s.rating||'')+'" placeholder="e.g. 4.5"></div></div>'+
+    '<label>Maps link</label><input id="ed-maps" value="'+esc(s.maps_link||'')+'" placeholder="paste Google Maps link">'+
+    '<label>Address</label><input id="ed-addr" value="'+esc(s.address||'')+'">'+
+    '<div class="frow"><div><label>Opening hours</label><input id="ed-hours" value="'+esc(s.hours||'')+'" placeholder="09:00–18:00"></div></div>'+
+    '<div class="frow"><div><label>Est. cost</label><input type="number" id="ed-cost" value="'+esc(s.est_cost!==''&&s.est_cost!=null?s.est_cost:'')+'"></div>'+
+    '<div><label>Currency</label><input id="ed-ccy" value="'+esc(s.currency||'EUR')+'"></div></div>'+
+    '<div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>'+
+    '<label>✓ Things to do</label><div id="todo-list">'+todoHtml+'</div>'+
+    '<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:12px" onclick="addTodo()">+ add to-do</button>'+
+    '<label>📝 Notes</label><textarea id="ed-notes" rows="3" placeholder="Practical reminders, tips…">'+esc(s.notes||'')+'</textarea>'+
+    '<label>📍 Nearby</label><div id="nearby-list">'+nearbyHtml+'</div>'+
+    '<button class="btn ghost" style="font-size:12px;padding:8px;margin-bottom:12px" onclick="addNearby()">+ add nearby place</button>'+
+    '<div style="border-top:1px solid var(--line);margin:14px 0 10px"></div>'+
+    '<label>🚶 Route to next stop</label>'+
+    '<div class="frow"><div><select id="ed-rmode"><option value="">—</option>'+opt('walk',s.route_mode)+opt('metro',s.route_mode)+opt('bus',s.route_mode)+opt('train',s.route_mode)+opt('taxi',s.route_mode)+'</select></div>'+
+    '<div><input id="ed-rmins" value="'+esc(s.route_mins||'')+'" placeholder="mins"></div>'+
+    '<div><input id="ed-rcost" value="'+esc(s.route_cost||'')+'" placeholder="cost"></div></div>'+
+    '<button class="btn" style="margin-top:8px" onclick="saveStopDetail(\''+stopId+'\')">Save details</button>'+
+    '<div class="frow" style="margin-top:8px"><button class="btn ghost" onclick="returnToInbox(\''+stopId+'\')">↩ To inbox</button>'+
+    '<button class="btn danger" onclick="delStop(\''+stopId+'\')">Delete</button></div>';
 }
+
+function closeStop(){ state.selected=null; if(isDesktop()) renderBoard(); else closeSheet(); }
+
+// dynamic to-do / nearby editing (operate on the selected stop's cache)
+function selStop(){ return state.stops.filter(function(x){return x.stop_id===state.selected;})[0]; }
+function addTodo(){ var s=selStop(); if(!s) return; s.things_to_do=collectTodos(); s.things_to_do.push(''); rerenderEditor(); }
+function rmTodo(i){ var s=selStop(); if(!s) return; s.things_to_do=collectTodos(); s.things_to_do.splice(i,1); rerenderEditor(); }
+function collectTodos(){ var out=[]; var els=document.querySelectorAll('[id^="td-"]'); els.forEach(function(e){ out.push(e.value); }); return out; }
+function addNearby(){ var s=selStop(); if(!s) return; s.nearby=collectNearby(); s.nearby.push({name:'',distance:''}); rerenderEditor(); }
+function rmNearby(i){ var s=selStop(); if(!s) return; s.nearby=collectNearby(); s.nearby.splice(i,1); rerenderEditor(); }
+function collectNearby(){ var out=[]; var names=document.querySelectorAll('[id^="nb-name-"]'); var dists=document.querySelectorAll('[id^="nb-dist-"]');
+  for(var i=0;i<names.length;i++){ out.push({name:names[i].value,distance:dists[i]?dists[i].value:''}); } return out; }
+function rerenderEditor(){
+  var html=editorHtml(state.selected);
+  if(isDesktop()){ var pc=document.getElementById('panel-card'); if(pc) pc.innerHTML=html; }
+  else { document.getElementById('sheet').innerHTML=html; }
+}
+
+function saveStopDetail(stopId){
+  var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
+  var changes={
+    place_name:document.getElementById('ed-name').value.trim(),
+    day:parseInt(document.getElementById('ed-day').value)||1,
+    time:document.getElementById('ed-time').value.trim(),
+    duration:document.getElementById('ed-dur').value.trim(),
+    type:document.getElementById('ed-type').value,
+    rating:document.getElementById('ed-rating').value.trim(),
+    maps_link:document.getElementById('ed-maps').value.trim(),
+    address:document.getElementById('ed-addr').value.trim(),
+    hours:document.getElementById('ed-hours').value.trim(),
+    est_cost:document.getElementById('ed-cost').value,
+    currency:document.getElementById('ed-ccy').value.trim(),
+    notes:document.getElementById('ed-notes').value.trim(),
+    route_mode:document.getElementById('ed-rmode').value,
+    route_mins:document.getElementById('ed-rmins').value.trim(),
+    route_cost:document.getElementById('ed-rcost').value.trim(),
+    things_to_do:collectTodos().filter(function(t){return t.trim();}),
+    nearby:collectNearby().filter(function(n){return n.name.trim();})
+  };
+  // update cache
+  Object.keys(changes).forEach(function(k){ s[k]=changes[k]; });
+  s.est_cost = s.est_cost===''?'':(parseFloat(s.est_cost)||0);
+  if(!isDesktop()) closeSheet();
+  state.selected = isDesktop()? stopId : null;
+  renderBoard(); toast('Details saved');
+  apiPost({action:'updateStop',stop_id:stopId,changes:changes}).catch(function(){toast('Could not save');});
+}
+
 function setStatus(stopId,st){
   var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
-  s.status=st; closeSheet(); renderBoard(); toast('Status: '+st);
-  apiPost({action:'updateStop',stop_id:stopId,changes:{status:st}}).catch(function(){toast('Could not save');});
+  // preserve any in-progress edits in the open editor before re-rendering
+  if(state.selected===stopId && document.getElementById('ed-name')){
+    s.place_name=document.getElementById('ed-name').value;
+    s.time=document.getElementById('ed-time').value;
+    s.notes=document.getElementById('ed-notes').value;
+    s.things_to_do=collectTodos(); s.nearby=collectNearby();
+  }
+  s.status=st; toast('Status: '+st);
+  if(isDesktop()) renderBoard(); else rerenderEditor();
 }
+// (status persists on "Save details"; tapping it mid-edit just updates the pill)
+
 function moveStop(stopId,day){
   var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(s) s.day=day;
-  closeSheet(); renderBoard(); toast('Moved to Day '+day);
+  renderBoard(); toast('Moved to Day '+day);
   apiPost({action:'moveStop',stop_id:stopId,day:day}).catch(function(){toast('Could not save');});
 }
 function delStop(stopId){
   if(!confirm('Delete this stop permanently? (To keep it, use "Return to ideas inbox" instead.)')) return;
   state.stops=state.stops.filter(function(x){return x.stop_id!==stopId;});
-  closeSheet(); renderBoard(); toast('Deleted');
+  state.selected=null; if(!isDesktop()) closeSheet(); renderBoard(); toast('Deleted');
   apiPost({action:'deleteStop',stop_id:stopId}).catch(function(){toast('Could not save');});
 }
 // send a scheduled stop back to the ideas inbox (reverse of scheduling)
@@ -305,7 +421,7 @@ function returnToInbox(stopId){
   var tempId='tmp-'+Date.now();
   state.stops=state.stops.filter(function(x){return x.stop_id!==stopId;});
   state.ideas.push({idea_id:tempId,trip_id:state.trip.trip_id,text:s.place_name,type:s.type||'',created:''});
-  closeSheet(); renderBoard(); toast('Returned to inbox');
+  state.selected=null; if(!isDesktop()) closeSheet(); renderBoard(); toast('Returned to inbox');
   apiPost({action:'unscheduleStop',stop_id:stopId}).then(function(d){
     if(d.ok && d.result && d.result.idea_id){
       var idea=state.ideas.filter(function(x){return x.idea_id===tempId;})[0];
