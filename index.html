@@ -34,14 +34,17 @@
     background:rgba(255,255,255,0.16);border:1px solid rgba(255,255,255,0.15);color:#fff;font-size:17px;cursor:pointer;z-index:2;}
 
   /* Layout: content area; on desktop a two-column board+panel */
-  .page{max-width:1100px;margin:0 auto;}
-  .board-wrap{display:flex;gap:18px;padding:18px;align-items:flex-start;}
-  .board{flex:1;min-width:0;}
-  .panel{flex:0 0 300px;position:sticky;top:18px;}
+  .page{max-width:1200px;margin:0 auto;}
+  .board-wrap{display:flex;gap:20px;padding:18px;align-items:flex-start;}
+  .board{flex:1;min-width:0;max-width:600px;}
+  .panel{flex:0 0 380px;position:sticky;top:18px;}
   @media(max-width:820px){
     .board-wrap{display:block;padding:14px;}
-    .panel{display:none;} /* becomes a bottom sheet in slice 2 */
+    .board{max-width:none;}
+    .panel{display:none;}
   }
+  .stop-map{width:100%;height:180px;border:none;border-radius:10px;margin-bottom:6px;background:#EEE8E8;}
+  .map-hint{font-size:11px;color:var(--t3);margin-bottom:12px;}
 
   /* Ideas inbox */
   .ideas{background:var(--gold-soft);border-radius:12px;padding:12px 14px;margin-bottom:16px;}
@@ -131,6 +134,7 @@ function apiGet(action, params){
 }
 function apiPost(body){ return fetch(API,{method:'POST',body:JSON.stringify(body)}).then(function(r){return r.json();}); }
 function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},2000); }
+function uuid(){ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c==='x'?r:(r&0x3|0x8);return v.toString(16);}); }
 function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':s); return d.innerHTML; }
 function fmtNice(d){ d=normDate(d); if(!d) return ''; var p=d.split('-'); if(p.length!==3) return d;
   var m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return parseInt(p[2])+' '+m[parseInt(p[1])-1]; }
@@ -315,7 +319,8 @@ function editorHtml(stopId){
 
   return (isDesktop()?'':'<div class="sheet-h"><div class="sheet-t">Edit stop</div><button class="x" onclick="closeStop()">✕</button></div>')+
     (isDesktop()?'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:var(--red-2);text-transform:uppercase;letter-spacing:0.5px">Stop detail</div><button class="x" onclick="closeStop()">✕</button></div>':'')+
-    '<label>Place name</label><input type="text" id="ed-name" value="'+esc(s.place_name)+'">'+
+    mapHtml(s)+
+    '<label>Place name</label><input type="text" id="ed-name" value="'+esc(s.place_name)+'" onblur="refreshMap()">'+
     '<div class="frow"><div><label>Day</label><select id="ed-day">'+dayOpt()+'</select></div>'+
     '<div><label>Time</label><input id="ed-time" value="'+esc(s.time||'')+'" placeholder="10:00"></div>'+
     '<div><label>Duration</label><input id="ed-dur" value="'+esc(s.duration||'')+'" placeholder="2h"></div></div>'+
@@ -323,7 +328,7 @@ function editorHtml(stopId){
     '<div class="frow"><div><label>Type</label><select id="ed-type">'+opt('sightseeing',s.type)+opt('food',s.type)+opt('transport',s.type)+opt('accommodation',s.type)+opt('activity',s.type)+'</select></div>'+
     '<div><label>Rating</label><input id="ed-rating" value="'+esc(s.rating||'')+'" placeholder="e.g. 4.5"></div></div>'+
     '<label>Maps link</label><input id="ed-maps" value="'+esc(s.maps_link||'')+'" placeholder="paste Google Maps link">'+
-    '<label>Address</label><input id="ed-addr" value="'+esc(s.address||'')+'">'+
+    '<label>Address</label><input id="ed-addr" value="'+esc(s.address||'')+'" onblur="refreshMap()">'+
     '<div class="frow"><div><label>Opening hours</label><input id="ed-hours" value="'+esc(s.hours||'')+'" placeholder="09:00–18:00"></div></div>'+
     '<div class="frow"><div><label>Est. cost</label><input type="number" id="ed-cost" value="'+esc(s.est_cost!==''&&s.est_cost!=null?s.est_cost:'')+'"></div>'+
     '<div><label>Currency</label><input id="ed-ccy" value="'+esc(s.currency||'EUR')+'"></div></div>'+
@@ -345,13 +350,63 @@ function editorHtml(stopId){
 
 function closeStop(){ state.selected=null; if(isDesktop()) renderBoard(); else closeSheet(); }
 
+// build the embedded map for a stop, from address or place name (free output=embed, no API key)
+function mapQuery_(s){
+  var q = (s.address && s.address.trim()) ? s.address.trim() : (s.place_name && s.place_name.trim() ? s.place_name.trim() : '');
+  // if a destination city is known, append it to disambiguate a bare place name
+  if(q && state.trip && state.trip.destination && q.toLowerCase().indexOf(state.trip.destination.toLowerCase())===-1){
+    q = q + ', ' + state.trip.destination;
+  }
+  return q;
+}
+function mapHtml(s){
+  var q=mapQuery_(s);
+  if(!q) return '<div class="map-hint">Add an address or place name to see a map.</div>';
+  var src='https://maps.google.com/maps?q='+encodeURIComponent(q)+'&z=15&output=embed';
+  var link = (s.maps_link && s.maps_link.trim()) ? s.maps_link.trim() : 'https://www.google.com/maps/search/'+encodeURIComponent(q);
+  return '<iframe class="stop-map" id="stop-map" src="'+src+'" loading="lazy" referrerpolicy="no-referrer-when-downgrade"></iframe>'+
+    '<div class="map-hint">Showing: '+esc(q)+' · <a href="'+esc(link)+'" target="_blank" style="color:var(--red);font-weight:700">Open in Google Maps ↗</a></div>';
+}
+// refresh just the map iframe from the current name/address inputs (no full re-render)
+function refreshMap(){
+  var s=selStop(); if(!s) return;
+  var nm=document.getElementById('ed-name'), ad=document.getElementById('ed-addr');
+  var tmp={place_name:nm?nm.value:s.place_name, address:ad?ad.value:s.address, maps_link:(document.getElementById('ed-maps')||{}).value||s.maps_link};
+  var q=mapQuery_(tmp);
+  var frame=document.getElementById('stop-map');
+  if(q && frame){ frame.src='https://maps.google.com/maps?q='+encodeURIComponent(q)+'&z=15&output=embed'; }
+}
+
 // dynamic to-do / nearby editing (operate on the selected stop's cache)
 function selStop(){ return state.stops.filter(function(x){return x.stop_id===state.selected;})[0]; }
-function addTodo(){ var s=selStop(); if(!s) return; s.things_to_do=collectTodos(); s.things_to_do.push(''); rerenderEditor(); }
-function rmTodo(i){ var s=selStop(); if(!s) return; s.things_to_do=collectTodos(); s.things_to_do.splice(i,1); rerenderEditor(); }
+// collect ALL current editor field values into the cached stop, so re-rendering
+// (e.g. after add/remove to-do or nearby) never loses in-progress edits
+function collectAllEditorFields(){
+  var s=selStop(); if(!s) return;
+  function v(id){ var e=document.getElementById(id); return e?e.value:undefined; }
+  if(v('ed-name')!==undefined) s.place_name=v('ed-name');
+  if(v('ed-day')!==undefined) s.day=parseInt(v('ed-day'))||s.day;
+  if(v('ed-time')!==undefined) s.time=v('ed-time');
+  if(v('ed-dur')!==undefined) s.duration=v('ed-dur');
+  if(v('ed-type')!==undefined) s.type=v('ed-type');
+  if(v('ed-rating')!==undefined) s.rating=v('ed-rating');
+  if(v('ed-maps')!==undefined) s.maps_link=v('ed-maps');
+  if(v('ed-addr')!==undefined) s.address=v('ed-addr');
+  if(v('ed-hours')!==undefined) s.hours=v('ed-hours');
+  if(v('ed-cost')!==undefined) s.est_cost=v('ed-cost');
+  if(v('ed-ccy')!==undefined) s.currency=v('ed-ccy');
+  if(v('ed-notes')!==undefined) s.notes=v('ed-notes');
+  if(v('ed-rmode')!==undefined) s.route_mode=v('ed-rmode');
+  if(v('ed-rmins')!==undefined) s.route_mins=v('ed-rmins');
+  if(v('ed-rcost')!==undefined) s.route_cost=v('ed-rcost');
+  if(document.querySelector('[id^="td-"]')) s.things_to_do=collectTodos();
+  if(document.querySelector('[id^="nb-name-"]')) s.nearby=collectNearby();
+}
+function addTodo(){ var s=selStop(); if(!s) return; collectAllEditorFields(); if(!s.things_to_do) s.things_to_do=[]; s.things_to_do.push(''); rerenderEditor(); }
+function rmTodo(i){ var s=selStop(); if(!s) return; collectAllEditorFields(); s.things_to_do.splice(i,1); rerenderEditor(); }
 function collectTodos(){ var out=[]; var els=document.querySelectorAll('[id^="td-"]'); els.forEach(function(e){ out.push(e.value); }); return out; }
-function addNearby(){ var s=selStop(); if(!s) return; s.nearby=collectNearby(); s.nearby.push({name:'',distance:''}); rerenderEditor(); }
-function rmNearby(i){ var s=selStop(); if(!s) return; s.nearby=collectNearby(); s.nearby.splice(i,1); rerenderEditor(); }
+function addNearby(){ var s=selStop(); if(!s) return; collectAllEditorFields(); if(!s.nearby) s.nearby=[]; s.nearby.push({name:'',distance:''}); rerenderEditor(); }
+function rmNearby(i){ var s=selStop(); if(!s) return; collectAllEditorFields(); s.nearby.splice(i,1); rerenderEditor(); }
 function collectNearby(){ var out=[]; var names=document.querySelectorAll('[id^="nb-name-"]'); var dists=document.querySelectorAll('[id^="nb-dist-"]');
   for(var i=0;i<names.length;i++){ out.push({name:names[i].value,distance:dists[i]?dists[i].value:''}); } return out; }
 function rerenderEditor(){
@@ -418,16 +473,11 @@ function delStop(stopId){
 // send a scheduled stop back to the ideas inbox (reverse of scheduling)
 function returnToInbox(stopId){
   var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
-  var tempId='tmp-'+Date.now();
+  var newIdeaId=uuid();
   state.stops=state.stops.filter(function(x){return x.stop_id!==stopId;});
-  state.ideas.push({idea_id:tempId,trip_id:state.trip.trip_id,text:s.place_name,type:s.type||'',created:''});
+  state.ideas.push({idea_id:newIdeaId,trip_id:state.trip.trip_id,text:s.place_name,type:s.type||'',created:''});
   state.selected=null; if(!isDesktop()) closeSheet(); renderBoard(); toast('Returned to inbox');
-  apiPost({action:'unscheduleStop',stop_id:stopId}).then(function(d){
-    if(d.ok && d.result && d.result.idea_id){
-      var idea=state.ideas.filter(function(x){return x.idea_id===tempId;})[0];
-      if(idea) idea.idea_id=d.result.idea_id;
-    }
-  }).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
+  apiPost({action:'unscheduleStop',stop_id:stopId,idea_id:newIdeaId}).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
 }
 
 // ---- ideas ----
@@ -441,16 +491,11 @@ function ideaMenu(ideaId){
 }
 function scheduleIdea(ideaId,day){
   var idea=state.ideas.filter(function(x){return x.idea_id===ideaId;})[0];
-  var tempId='tmp-'+Date.now();
+  var newId=uuid();  // real id, generated client-side so it's stable immediately
   state.ideas=state.ideas.filter(function(x){return x.idea_id!==ideaId;});
-  state.stops.push({stop_id:tempId,trip_id:state.trip.trip_id,day:day,place_name:idea?idea.text:'',type:idea&&idea.type?idea.type:'sightseeing',status:'idea',time:'',est_cost:'',things_to_do:[],nearby:[]});
+  state.stops.push({stop_id:newId,trip_id:state.trip.trip_id,day:day,place_name:idea?idea.text:'',type:idea&&idea.type?idea.type:'sightseeing',status:'idea',time:'',est_cost:'',things_to_do:[],nearby:[]});
   closeSheet(); renderBoard(); toast('Scheduled into Day '+day);
-  apiPost({action:'scheduleIdea',idea_id:ideaId,day:day}).then(function(d){
-    if(d.ok && d.result && d.result.stop_id){
-      var st=state.stops.filter(function(x){return x.stop_id===tempId;})[0];
-      if(st) st.stop_id=d.result.stop_id;
-    }
-  }).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
+  apiPost({action:'scheduleIdea',idea_id:ideaId,day:day,stop_id:newId}).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
 }
 function delIdea(ideaId){
   state.ideas=state.ideas.filter(function(x){return x.idea_id!==ideaId;});
@@ -464,10 +509,10 @@ function addIdeaForm(){
 }
 function saveIdea(){
   var text=document.getElementById('i-text').value.trim(); if(!text){toast('Enter something');return;}
-  closeSheet(); toast('Idea added');
-  apiPost({action:'addIdea',trip_id:state.trip.trip_id,text:text}).then(function(d){
-    if(d.ok && d.result){ state.ideas.push({idea_id:d.result.idea_id,trip_id:state.trip.trip_id,text:text,type:'',created:''}); renderBoard(); }
-  }).catch(function(){toast('Could not save');});
+  var newId=uuid();
+  state.ideas.push({idea_id:newId,trip_id:state.trip.trip_id,text:text,type:'',created:''});
+  closeSheet(); renderBoard(); toast('Idea added');
+  apiPost({action:'addIdea',trip_id:state.trip.trip_id,text:text,idea_id:newId}).catch(function(){toast('Could not save');});
 }
 
 // ---- add stop (basic in slice 1; full editor in slice 2) ----
@@ -484,21 +529,19 @@ function addStopForm(day){
 }
 function saveStop(day){
   var name=document.getElementById('s-name').value.trim(); if(!name){toast('Enter a name');return;}
+  var newId=uuid();
   var stop={
-    trip_id:state.trip.trip_id, day:day,
+    stop_id:newId, trip_id:state.trip.trip_id, day:day,
     place_name:name, time:document.getElementById('s-time').value.trim(),
     duration:document.getElementById('s-dur').value.trim(),
     type:document.getElementById('s-type').value, status:document.getElementById('s-status').value,
-    est_cost:document.getElementById('s-cost').value, currency:document.getElementById('s-ccy').value.trim()
+    est_cost:document.getElementById('s-cost').value, currency:document.getElementById('s-ccy').value.trim(),
+    things_to_do:[], nearby:[]
   };
-  closeSheet(); toast('Stop added');
-  apiPost(Object.assign({action:'addStop'},stop)).then(function(d){
-    if(d.ok && d.result){
-      stop.stop_id=d.result.stop_id; stop.things_to_do=[]; stop.nearby=[];
-      stop.est_cost=stop.est_cost===''?'':(parseFloat(stop.est_cost)||0);
-      state.stops.push(stop); renderBoard();
-    } else toast('Error: '+(d.error||'add failed'));
-  }).catch(function(){toast('Could not save');});
+  var cached=Object.assign({},stop); cached.est_cost=cached.est_cost===''?'':(parseFloat(cached.est_cost)||0);
+  state.stops.push(cached);
+  closeSheet(); renderBoard(); toast('Stop added');
+  apiPost(Object.assign({action:'addStop'},stop)).catch(function(){toast('Could not save');});
 }
 
 // ---- FAB + sheet ----
