@@ -164,7 +164,7 @@ function renderTrips(){
   else state.trips.forEach(function(t){
     h+='<div class="card" onclick="openBoard(\''+t.trip_id+'\')">'+
       '<div class="card-title">'+esc(t.destination)+'</div>'+
-      '<div class="card-sub">'+fmtNice(t.start_date)+' – '+fmtNice(t.end_date)+' · '+esc(t.status)+'</div></div>';
+      '<div class="card-sub">'+fmtNice(t.start_date)+' – '+fmtNice(t.end_date)+' · '+esc(t.trip_id)+'</div></div>';
   });
   h+='</div>';
   paint(h);
@@ -202,7 +202,7 @@ function renderBoard(){
     '<button class="hd-refresh" onclick="openBoard(\''+t.trip_id+'\')">↻</button>'+
     '<div class="hd-eyebrow">Planning board</div>'+
     '<div class="hd-title">'+esc(t.destination)+'</div>'+
-    '<div class="hd-sub">'+state.stops.length+' stops · '+state.ideas.length+' ideas · '+days+' days</div></div>'+
+    '<div class="hd-sub">'+esc(t.trip_id)+' · '+state.stops.length+' stops · '+state.ideas.length+' ideas · '+days+' days</div></div>'+
     '<div class="page"><div class="board-wrap"><div class="board">';
 
   // ideas inbox
@@ -213,9 +213,14 @@ function renderBoard(){
   h+='<span class="chip add" onclick="addIdeaForm()">+ add idea</span></div></div>';
 
   // days
+  var startDate = state.trip.start_date ? new Date(state.trip.start_date) : null;
+  var dayNames=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+  var monNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   for(var d=1; d<=days; d++){
     var dayStops=state.stops.filter(function(s){return s.day===d;});
-    h+='<div class="day"><div class="day-h">Day '+d+' <span class="count">'+(dayStops.length?dayStops.length+' stop'+(dayStops.length>1?'s':''):'')+'</span></div>';
+    var dateLabel='';
+    if(startDate){ var dd=new Date(startDate); dd.setDate(dd.getDate()+(d-1)); dateLabel=dayNames[dd.getDay()]+' '+dd.getDate()+' '+monNames[dd.getMonth()]; }
+    h+='<div class="day"><div class="day-h">Day '+d+(dateLabel?' · '+dateLabel:'')+' <span class="count">'+(dayStops.length?dayStops.length+' stop'+(dayStops.length>1?'s':''):'')+'</span></div>';
     dayStops.forEach(function(s){
       h+='<div class="stop '+esc(s.status)+'" onclick="stopMenu(\''+s.stop_id+'\')"><div class="stop-top">'+
         '<span class="stop-time">'+esc(s.time||'—')+'</span>'+
@@ -245,23 +250,26 @@ function stopMenu(stopId){
   var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
   var days=tripDayCount(); var opts='';
   for(var d=1; d<=days; d++){ if(d!==s.day) opts+='<button class="btn ghost" style="margin-bottom:6px" onclick="moveStop(\''+stopId+'\','+d+')">Move to Day '+d+'</button>'; }
+  var statusBtns='<div style="display:flex;gap:6px;margin-bottom:10px">'+
+    ['idea','planned','booked'].map(function(st){
+      var on=(s.status===st);
+      return '<button class="btn '+(on?'':'ghost')+'" style="flex:1;font-size:12px;padding:9px 0" onclick="setStatus(\''+stopId+'\',\''+st+'\')">'+st+'</button>';
+    }).join('')+'</div>';
   openSheet('<div class="sheet-h"><div class="sheet-t">'+esc(s.place_name)+'</div><button class="x" onclick="closeSheet()">✕</button></div>'+
-    '<div style="font-size:13px;color:var(--t2);margin-bottom:12px">Day '+s.day+(s.time?' · '+esc(s.time):'')+' · '+esc(s.status)+'</div>'+
+    '<div style="font-size:13px;color:var(--t2);margin-bottom:12px">Day '+s.day+(s.time?' · '+esc(s.time):'')+'</div>'+
+    '<label>Status</label>'+statusBtns+
     opts+
-    '<button class="btn ghost" style="margin-bottom:6px" onclick="cycleStatus(\''+stopId+'\')">Change status ('+esc(s.status)+')</button>'+
     '<button class="btn ghost" onclick="delStop(\''+stopId+'\')">Delete stop</button>');
+}
+function setStatus(stopId,st){
+  var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
+  s.status=st; closeSheet(); renderBoard(); toast('Status: '+st);
+  apiPost({action:'updateStop',stop_id:stopId,changes:{status:st}}).catch(function(){toast('Could not save');});
 }
 function moveStop(stopId,day){
   var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(s) s.day=day;
   closeSheet(); renderBoard(); toast('Moved to Day '+day);
   apiPost({action:'moveStop',stop_id:stopId,day:day}).catch(function(){toast('Could not save');});
-}
-function cycleStatus(stopId){
-  var order=['idea','planned','booked'];
-  var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
-  var next=order[(order.indexOf(s.status)+1)%order.length];
-  s.status=next; closeSheet(); renderBoard(); toast('Status: '+next);
-  apiPost({action:'updateStop',stop_id:stopId,changes:{status:next}}).catch(function(){toast('Could not save');});
 }
 function delStop(stopId){
   if(!confirm('Delete this stop?')) return;
@@ -280,8 +288,14 @@ function ideaMenu(ideaId){
     '<button class="btn ghost" onclick="delIdea(\''+ideaId+'\')">Delete idea</button>');
 }
 function scheduleIdea(ideaId,day){
+  var idea=state.ideas.filter(function(x){return x.idea_id===ideaId;})[0];
   closeSheet(); toast('Scheduled into Day '+day);
-  apiPost({action:'scheduleIdea',idea_id:ideaId,day:day}).then(function(){ openBoard(state.trip.trip_id); }).catch(function(){toast('Could not save');});
+  // optimistic: remove idea, add a placeholder stop; then reconcile with server ids
+  state.ideas=state.ideas.filter(function(x){return x.idea_id!==ideaId;});
+  renderBoard();
+  apiPost({action:'scheduleIdea',idea_id:ideaId,day:day}).then(function(d){
+    if(d.ok && d.result){ state.stops.push({stop_id:d.result.stop_id,trip_id:state.trip.trip_id,day:day,place_name:idea?idea.text:'',type:'sightseeing',status:'idea',time:'',things_to_do:[],nearby:[]}); renderBoard(); }
+  }).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
 }
 function delIdea(ideaId){
   state.ideas=state.ideas.filter(function(x){return x.idea_id!==ideaId;});
@@ -296,7 +310,9 @@ function addIdeaForm(){
 function saveIdea(){
   var text=document.getElementById('i-text').value.trim(); if(!text){toast('Enter something');return;}
   closeSheet(); toast('Idea added');
-  apiPost({action:'addIdea',trip_id:state.trip.trip_id,text:text}).then(function(){ openBoard(state.trip.trip_id); }).catch(function(){toast('Could not save');});
+  apiPost({action:'addIdea',trip_id:state.trip.trip_id,text:text}).then(function(d){
+    if(d.ok && d.result){ state.ideas.push({idea_id:d.result.idea_id,trip_id:state.trip.trip_id,text:text,type:'',created:''}); renderBoard(); }
+  }).catch(function(){toast('Could not save');});
 }
 
 // ---- add stop (basic in slice 1; full editor in slice 2) ----
@@ -313,13 +329,21 @@ function addStopForm(day){
 }
 function saveStop(day){
   var name=document.getElementById('s-name').value.trim(); if(!name){toast('Enter a name');return;}
-  closeSheet(); toast('Stop added');
-  apiPost({action:'addStop',trip_id:state.trip.trip_id,day:day,
+  var stop={
+    trip_id:state.trip.trip_id, day:day,
     place_name:name, time:document.getElementById('s-time').value.trim(),
     duration:document.getElementById('s-dur').value.trim(),
     type:document.getElementById('s-type').value, status:document.getElementById('s-status').value,
     est_cost:document.getElementById('s-cost').value, currency:document.getElementById('s-ccy').value.trim()
-  }).then(function(){ openBoard(state.trip.trip_id); }).catch(function(){toast('Could not save');});
+  };
+  closeSheet(); toast('Stop added');
+  apiPost(Object.assign({action:'addStop'},stop)).then(function(d){
+    if(d.ok && d.result){
+      stop.stop_id=d.result.stop_id; stop.things_to_do=[]; stop.nearby=[];
+      stop.est_cost=stop.est_cost===''?'':(parseFloat(stop.est_cost)||0);
+      state.stops.push(stop); renderBoard();
+    } else toast('Error: '+(d.error||'add failed'));
+  }).catch(function(){toast('Could not save');});
 }
 
 // ---- FAB + sheet ----
