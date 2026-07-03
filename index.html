@@ -126,8 +126,23 @@ function apiGet(action, params){
 function apiPost(body){ return fetch(API,{method:'POST',body:JSON.stringify(body)}).then(function(r){return r.json();}); }
 function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},2000); }
 function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':s); return d.innerHTML; }
-function fmtNice(d){ if(!d) return ''; var p=d.split('-'); if(p.length!==3) return d;
+function fmtNice(d){ d=normDate(d); if(!d) return ''; var p=d.split('-'); if(p.length!==3) return d;
   var m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return parseInt(p[2])+' '+m[parseInt(p[1])-1]; }
+// normalise any date value to yyyy-MM-dd, timezone-safe
+function normDate(v){
+  if(!v) return '';
+  var s=v.toString();
+  if(/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if(s.indexOf('T')!==-1 && /^\d{4}-/.test(s)) return s.split('T')[0];
+  // raw JS Date string e.g. "Mon Aug 10 2026 00:00:00 GMT+0800" — pull parts directly (no TZ shift)
+  var mons={Jan:'01',Feb:'02',Mar:'03',Apr:'04',May:'05',Jun:'06',Jul:'07',Aug:'08',Sep:'09',Oct:'10',Nov:'11',Dec:'12'};
+  var mm=s.match(/\b([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\b/);
+  if(mm && mons[mm[1]]){ return mm[3]+'-'+mons[mm[1]]+'-'+('0'+mm[2]).slice(-2); }
+  var d=new Date(s);
+  if(isNaN(d.getTime())) return '';
+  var m2=('0'+(d.getMonth()+1)).slice(-2), d2=('0'+d.getDate()).slice(-2);
+  return d.getFullYear()+'-'+m2+'-'+d2;
+}
 function paint(html){ var a=document.getElementById('app'); a.innerHTML=html; a.classList.remove('fade-in'); void a.offsetWidth; a.classList.add('fade-in'); }
 
 window.addEventListener('DOMContentLoaded', function(){
@@ -185,12 +200,12 @@ function openBoard(tripId){
 
 function tripDayCount(){
   var t=state.trip;
-  if(t && t.start_date && t.end_date){
-    var a=new Date(t.start_date), b=new Date(t.end_date);
+  var sc=normDate(t&&t.start_date), ec=normDate(t&&t.end_date);
+  if(sc && ec){
+    var a=new Date(sc), b=new Date(ec);
     var n=Math.round((b-a)/86400000)+1;
     if(n>0 && n<40) return n;
   }
-  // fall back to max day used, min 1
   var maxDay=state.stops.reduce(function(m,s){return Math.max(m,s.day||1);},1);
   return maxDay;
 }
@@ -213,7 +228,8 @@ function renderBoard(){
   h+='<span class="chip add" onclick="addIdeaForm()">+ add idea</span></div></div>';
 
   // days
-  var startDate = state.trip.start_date ? new Date(state.trip.start_date) : null;
+  var startClean = normDate(state.trip.start_date);
+  var startDate = startClean ? new Date(startClean) : null;
   var dayNames=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   var monNames=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   for(var d=1; d<=days; d++){
