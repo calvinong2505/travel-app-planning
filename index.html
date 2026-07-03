@@ -83,6 +83,7 @@
 
   .btn{background:var(--red);color:#fff;border:none;border-radius:10px;padding:12px;font-size:15px;font-weight:700;cursor:pointer;width:100%;font-family:inherit;}
   .btn.ghost{background:var(--card);color:var(--red-2);border:1px solid var(--red-line);}
+  .btn.danger{background:var(--red);color:#fff;border:none;}
   input,select,textarea{width:100%;padding:12px 13px;font-size:16px;border:1px solid var(--red-line);border-radius:10px;background:var(--card);font-family:inherit;margin-bottom:8px;color:var(--t1);}
   input:focus,select:focus,textarea:focus{outline:none;border-color:var(--red);}
   label{font-size:12px;font-weight:600;color:var(--t2);display:block;margin:6px 0 4px;}
@@ -280,7 +281,7 @@ function stopMenu(stopId){
     '<label>Status</label>'+statusBtns+
     opts+
     '<button class="btn ghost" style="margin-bottom:6px" onclick="returnToInbox(\''+stopId+'\')">↩ Return to ideas inbox</button>'+
-    '<button class="btn ghost" onclick="delStop(\''+stopId+'\')">Delete stop</button>');
+    '<button class="btn danger" onclick="delStop(\''+stopId+'\')">Delete stop</button>');
 }
 function setStatus(stopId,st){
   var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
