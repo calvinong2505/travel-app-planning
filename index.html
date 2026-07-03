@@ -135,6 +135,8 @@ function apiGet(action, params){
 function apiPost(body){ return fetch(API,{method:'POST',body:JSON.stringify(body)}).then(function(r){return r.json();}); }
 function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); setTimeout(function(){t.classList.remove('show');},2000); }
 function uuid(){ return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,function(c){var r=Math.random()*16|0,v=c==='x'?r:(r&0x3|0x8);return v.toString(16);}); }
+// filter out mangled time values like "+0655" so they never display
+function showTime(t){ if(!t) return ''; var s=t.toString(); if(/^[+-]\d{4}$/.test(s)) return ''; return s; }
 function esc(s){ var d=document.createElement('div'); d.textContent=(s==null?'':s); return d.innerHTML; }
 function fmtNice(d){ d=normDate(d); if(!d) return ''; var p=d.split('-'); if(p.length!==3) return d;
   var m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']; return parseInt(p[2])+' '+m[parseInt(p[1])-1]; }
@@ -250,7 +252,7 @@ function renderBoard(){
     h+='<div class="day"><div class="day-h">Day '+d+(dateLabel?' · '+dateLabel:'')+' <span class="count">'+(dayStops.length?dayStops.length+' stop'+(dayStops.length>1?'s':''):'')+'</span></div>';
     dayStops.forEach(function(s){
       h+='<div class="stop '+esc(s.status)+(state.selected===s.stop_id?' sel':'')+'" onclick="openStop(\''+s.stop_id+'\')"><div class="stop-top">'+
-        '<span class="stop-time">'+esc(s.time||'—')+'</span>'+
+        '<span class="stop-time">'+esc(showTime(s.time)||'—')+'</span>'+
         '<span class="stop-name">'+esc(s.place_name)+'</span>'+
         '<span class="pill '+esc(s.status)+'">'+esc(s.status)+'</span></div>';
       var meta=[]; if(s.type) meta.push(esc(s.type));
@@ -322,7 +324,7 @@ function editorHtml(stopId){
     mapHtml(s)+
     '<label>Place name</label><input type="text" id="ed-name" value="'+esc(s.place_name)+'" onblur="refreshMap()">'+
     '<div class="frow"><div><label>Day</label><select id="ed-day">'+dayOpt()+'</select></div>'+
-    '<div><label>Time</label><input id="ed-time" value="'+esc(s.time||'')+'" placeholder="10:00"></div>'+
+    '<div><label>Time</label><input id="ed-time" value="'+esc(showTime(s.time))+'" placeholder="10:00"></div>'+
     '<div><label>Duration</label><input id="ed-dur" value="'+esc(s.duration||'')+'" placeholder="2h"></div></div>'+
     '<label>Status</label>'+statusBtns+
     '<div class="frow"><div><label>Type</label><select id="ed-type">'+opt('sightseeing',s.type)+opt('food',s.type)+opt('transport',s.type)+opt('accommodation',s.type)+opt('activity',s.type)+'</select></div>'+
