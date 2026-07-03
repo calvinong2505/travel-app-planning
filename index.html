@@ -91,8 +91,11 @@
   .empty{text-align:center;padding:34px 16px;color:var(--t3);font-size:14px;}
   .spin{width:22px;height:22px;border:2.5px solid var(--red-soft);border-top-color:var(--red);border-radius:50%;animation:sp .7s linear infinite;margin:34px auto;}
   @keyframes sp{to{transform:rotate(360deg);}}
-  .fade-in{animation:fadeIn .22s ease;}
-  @keyframes fadeIn{from{opacity:0;transform:translateY(6px);}to{opacity:1;transform:translateY(0);}}
+  .fade-in{animation:fadeIn .28s cubic-bezier(.22,.61,.36,1);}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
+  .stop,.card,.chip{animation:rise .3s cubic-bezier(.22,.61,.36,1) backwards;}
+  @keyframes rise{from{opacity:0;transform:translateY(7px);}to{opacity:1;transform:translateY(0);}}
+  .day{animation:fadeIn .3s ease backwards;}
 
   .fab{position:fixed;bottom:20px;right:20px;width:54px;height:54px;border-radius:50%;background:var(--red);color:#fff;border:none;font-size:26px;box-shadow:0 4px 16px rgba(160,27,32,0.4);cursor:pointer;z-index:20;}
   .ov{position:fixed;inset:0;background:rgba(40,20,22,0.5);z-index:50;display:none;align-items:flex-end;justify-content:center;}
@@ -143,7 +146,8 @@ function normDate(v){
   var m2=('0'+(d.getMonth()+1)).slice(-2), d2=('0'+d.getDate()).slice(-2);
   return d.getFullYear()+'-'+m2+'-'+d2;
 }
-function paint(html){ var a=document.getElementById('app'); a.innerHTML=html; a.classList.remove('fade-in'); void a.offsetWidth; a.classList.add('fade-in'); }
+function paint(html){ var a=document.getElementById('app'); a.innerHTML=html; a.classList.remove('fade-in'); void a.offsetWidth; a.classList.add('fade-in');
+  var items=a.querySelectorAll('.stop,.card,.day'); for(var i=0;i<items.length;i++){ items[i].style.animationDelay=(i*0.025)+'s'; } }
 
 window.addEventListener('DOMContentLoaded', function(){
   if(!API){ renderSetup(); return; }
@@ -275,6 +279,7 @@ function stopMenu(stopId){
     '<div style="font-size:13px;color:var(--t2);margin-bottom:12px">Day '+s.day+(s.time?' · '+esc(s.time):'')+'</div>'+
     '<label>Status</label>'+statusBtns+
     opts+
+    '<button class="btn ghost" style="margin-bottom:6px" onclick="returnToInbox(\''+stopId+'\')">↩ Return to ideas inbox</button>'+
     '<button class="btn ghost" onclick="delStop(\''+stopId+'\')">Delete stop</button>');
 }
 function setStatus(stopId,st){
@@ -288,10 +293,24 @@ function moveStop(stopId,day){
   apiPost({action:'moveStop',stop_id:stopId,day:day}).catch(function(){toast('Could not save');});
 }
 function delStop(stopId){
-  if(!confirm('Delete this stop?')) return;
+  if(!confirm('Delete this stop permanently? (To keep it, use "Return to ideas inbox" instead.)')) return;
   state.stops=state.stops.filter(function(x){return x.stop_id!==stopId;});
   closeSheet(); renderBoard(); toast('Deleted');
   apiPost({action:'deleteStop',stop_id:stopId}).catch(function(){toast('Could not save');});
+}
+// send a scheduled stop back to the ideas inbox (reverse of scheduling)
+function returnToInbox(stopId){
+  var s=state.stops.filter(function(x){return x.stop_id===stopId;})[0]; if(!s) return;
+  var tempId='tmp-'+Date.now();
+  state.stops=state.stops.filter(function(x){return x.stop_id!==stopId;});
+  state.ideas.push({idea_id:tempId,trip_id:state.trip.trip_id,text:s.place_name,type:s.type||'',created:''});
+  closeSheet(); renderBoard(); toast('Returned to inbox');
+  apiPost({action:'unscheduleStop',stop_id:stopId}).then(function(d){
+    if(d.ok && d.result && d.result.idea_id){
+      var idea=state.ideas.filter(function(x){return x.idea_id===tempId;})[0];
+      if(idea) idea.idea_id=d.result.idea_id;
+    }
+  }).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
 }
 
 // ---- ideas ----
@@ -305,12 +324,15 @@ function ideaMenu(ideaId){
 }
 function scheduleIdea(ideaId,day){
   var idea=state.ideas.filter(function(x){return x.idea_id===ideaId;})[0];
-  closeSheet(); toast('Scheduled into Day '+day);
-  // optimistic: remove idea, add a placeholder stop; then reconcile with server ids
+  var tempId='tmp-'+Date.now();
   state.ideas=state.ideas.filter(function(x){return x.idea_id!==ideaId;});
-  renderBoard();
+  state.stops.push({stop_id:tempId,trip_id:state.trip.trip_id,day:day,place_name:idea?idea.text:'',type:idea&&idea.type?idea.type:'sightseeing',status:'idea',time:'',est_cost:'',things_to_do:[],nearby:[]});
+  closeSheet(); renderBoard(); toast('Scheduled into Day '+day);
   apiPost({action:'scheduleIdea',idea_id:ideaId,day:day}).then(function(d){
-    if(d.ok && d.result){ state.stops.push({stop_id:d.result.stop_id,trip_id:state.trip.trip_id,day:day,place_name:idea?idea.text:'',type:'sightseeing',status:'idea',time:'',things_to_do:[],nearby:[]}); renderBoard(); }
+    if(d.ok && d.result && d.result.stop_id){
+      var st=state.stops.filter(function(x){return x.stop_id===tempId;})[0];
+      if(st) st.stop_id=d.result.stop_id;
+    }
   }).catch(function(){toast('Could not save'); openBoard(state.trip.trip_id);});
 }
 function delIdea(ideaId){
