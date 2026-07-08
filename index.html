@@ -263,12 +263,19 @@ function computeTimeline(dayStops){
       var prevEnd=prevInfo?prevInfo.endMin:null;
       var prevStart=timeToMin(showTime(prev.time));
       if(start!=null){
-        // impossible connection: prev end + travel > this start
         var travel=routeMin(prev);
-        if(prevEnd!=null && travel!=null && prevEnd+travel>start){
-          info.warnings.push({type:'tight',text:'Only '+(start-prevEnd)+'m after '+shortName(prev.place_name)+', but '+travel+'m travel needed'});
-        } else if(prevEnd!=null && prevEnd>start){
-          info.warnings.push({type:'overlap',text:'Overlaps '+shortName(prev.place_name)+' (ends '+minToTime(prevEnd)+')'});
+        var gap = (prevEnd!=null) ? (start - prevEnd) : null;  // minutes between prev end and this start
+        if(gap!=null && gap < 0){
+          // this stop starts before the previous one finishes -> overlap
+          var over = -gap;
+          if(travel!=null){
+            info.warnings.push({type:'overlap',text:'Starts before '+shortName(prev.place_name)+' ends (overlaps by '+over+'m, and needs '+travel+'m travel)'});
+          } else {
+            info.warnings.push({type:'overlap',text:'Overlaps '+shortName(prev.place_name)+' by '+over+'m (ends '+minToTime(prevEnd)+')'});
+          }
+        } else if(gap!=null && travel!=null && gap < travel){
+          // enough order but not enough time for the trip between them
+          info.warnings.push({type:'tight',text:'Only '+gap+'m after '+shortName(prev.place_name)+', but '+travel+'m travel needed'});
         } else if(prevStart!=null && start<prevStart){
           info.warnings.push({type:'order',text:'Earlier than the stop above it'});
         }
